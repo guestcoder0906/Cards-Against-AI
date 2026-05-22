@@ -298,6 +298,75 @@ You must pick the funniest/best completion. Base it on your preference! Reply ON
     };
   }, [playWhiteCards, pickWinner, selectBlackCard]); // We include stable methods, empty variables 
 
+  const speakTTS = (text: string, voiceOpts: any, fallbackVoiceName?: string) => {
+    if (isMutedRef.current) return;
+
+    const speakNative = () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        try {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          const voices = window.speechSynthesis.getVoices();
+          if (voices && voices.length > 0) {
+            let voiceSelected = null;
+            if (fallbackVoiceName) {
+              voiceSelected = voices.find(v => 
+                v.name.toLowerCase().includes(fallbackVoiceName.toLowerCase()) || 
+                v.name.toLowerCase().includes(fallbackVoiceName === 'Matthew' ? 'male' : 'female')
+              );
+            }
+            if (!voiceSelected) {
+              voiceSelected = voices.find(v => v.lang.startsWith('en'));
+            }
+            if (voiceSelected) {
+              utterance.voice = voiceSelected;
+            }
+          }
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          window.speechSynthesis.speak(utterance);
+        } catch (e) {
+          console.error("Web Speech API failed:", e);
+        }
+      }
+    };
+
+    try {
+      puter.ai.txt2speech(text, voiceOpts)
+        .then((audio: any) => {
+          if (audio && typeof audio.play === 'function') {
+            audio.play().catch((err: any) => {
+              console.warn("Puter audio.play() failed, trying native Web Speech API:", err);
+              speakNative();
+            });
+          } else {
+            console.warn("Puter txt2speech did not return playable audio, trying native Web Speech API.");
+            speakNative();
+          }
+        })
+        .catch((err: any) => {
+          console.warn("Puter txt2speech with options failed. Trying default Puter voice. Error:", err);
+          puter.ai.txt2speech(text)
+            .then((audio: any) => {
+              if (audio && typeof audio.play === 'function') {
+                audio.play().catch((e: any) => {
+                  console.warn("Default Puter playback failed, trying native:", e);
+                  speakNative();
+                });
+              } else {
+                speakNative();
+              }
+            })
+            .catch((e: any) => {
+              console.warn("Default Puter txt2speech failed, trying native:", e);
+              speakNative();
+            });
+        });
+    } catch (err) {
+      console.warn("Synchronous error during txt2speech trigger, trying native:", err);
+      speakNative();
+    }
+  };
 
   // AI Chat Loop
   useEffect(() => {
@@ -373,9 +442,7 @@ Format EXACTLY: [Emoji] | [Message] or just [Message] if no emoji.`;
         if (messageText && !messageText.trim().startsWith('PASS')) {
           addMessage({ sender: model.name, model: model.modelCode, text: messageText, reaction });
           if (!isMutedRef.current) {
-            try {
-              puter.ai.txt2speech(messageText, model.voice).then((audio: any) => audio.play().catch(console.log));
-            } catch(e) {}
+            speakTTS(messageText, model.voice, model.voice?.voice);
           }
         }
       } catch (e) {
