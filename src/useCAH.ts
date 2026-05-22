@@ -55,24 +55,48 @@ export function useCAH() {
         whiteDeck.sort(() => Math.random() - 0.5);
         blackDeck.sort(() => Math.random() - 0.5);
 
-        const initialPlayers: Player[] = [
-          { id: 'user', name: 'You', isAI: false, score: 0, hand: [], playedCards: [] },
+        const initialPlayers = [
+          { id: 'user', name: 'You', isAI: false, score: 0, hand: [] as string[], playedCards: [] },
           ...AI_MODELS.map(model => ({
             id: model.id,
             name: model.name,
             isAI: true,
             score: 0,
-            hand: [],
+            hand: [] as string[],
             playedCards: [],
             modelInfo: model
           }))
         ];
 
-        // Deal 10 cards each
-        let wIndex = 0;
+        const drawWhiteCards = (count: number, currentHand: string[], currentDeck: string[]) => {
+            const cards = [];
+            let updatedDeck = [...currentDeck];
+            for (let i = 0; i < count; i++) {
+                const isCustom = Math.random() < 0.33;
+                if (isCustom) {
+                    cards.push("__CUSTOM__" + Math.random().toString(36).substring(7));
+                } else {
+                    let cardObj = null;
+                    let attempts = 0;
+                    while(attempts < 20) {
+                       cardObj = updatedDeck.pop();
+                       if (!cardObj) break;
+                       if (!currentHand.includes(cardObj) && !cards.includes(cardObj)) {
+                           break;
+                       }
+                       attempts++;
+                    }
+                    if (cardObj) cards.push(cardObj);
+                }
+            }
+            return { cards, remainingDeck: updatedDeck };
+        };
+
+        let currentWhiteDeck = [...whiteDeck];
         for (const p of initialPlayers) {
-          p.hand = whiteDeck.slice(wIndex, wIndex + 10);
-          wIndex += 10;
+            const { cards, remainingDeck } = drawWhiteCards(10, p.hand, currentWhiteDeck);
+            p.hand = cards;
+            currentWhiteDeck = remainingDeck;
         }
 
         setGameState(prev => ({
@@ -80,7 +104,7 @@ export function useCAH() {
           phase: 'SELECT_BLACK_CARD',
           players: initialPlayers,
           blackDeck: blackDeck.slice(3),
-          whiteDeck: whiteDeck.slice(wIndex),
+          whiteDeck: currentWhiteDeck,
           czarId: initialPlayers[Math.floor(Math.random() * initialPlayers.length)].id,
           blackCardOptions: blackDeck.slice(0, 3)
         }));
@@ -95,19 +119,28 @@ export function useCAH() {
     setMessages(prev => [...prev, { ...msg, id: Date.now().toString() + Math.random(), timestamp: Date.now() }]);
   }, []);
 
-  const drawWhiteCards = (count: number) => {
+  const drawWhiteCards = (count: number, currentHand: string[], currentDeck: string[]) => {
     const cards = [];
-    let currentWhiteDeck = [...stateRef.current.whiteDeck];
+    let updatedDeck = [...currentDeck];
     for (let i = 0; i < count; i++) {
-        // 33% chance of generating a custom card? To simulate this fast, we can just say "[Custom Card Generated]" or generate via prompt if we have time, but fetching custom cards takes seconds. We will use a pre-set list of custom-like cards or just label it custom if we want, OR we can literally ask puter to generate one, but it blocks.
-        // Let's just draw from the deck for simplicity unless they strictly want AI generating custom cards. Let's just generate a custom string locally to satisfy 33%.
-        if (Math.random() < 0.33) {
-            cards.push("A custom procedurally generated card about " + ["hot dogs", "butt stuff", "Trump", "Elon Musk", "AI taking over", "shoving a cucumber in your ear", "crying in the shower"][Math.floor(Math.random() * 7)] + ".");
+        const isCustom = Math.random() < 0.33;
+        if (isCustom) {
+            cards.push("__CUSTOM__" + Math.random().toString(36).substring(7));
         } else {
-            cards.push(currentWhiteDeck.pop()!);
+            let cardObj = null;
+            let attempts = 0;
+            while(attempts < 20) {
+               cardObj = updatedDeck.pop();
+               if (!cardObj) break;
+               if (!currentHand.includes(cardObj) && !cards.includes(cardObj)) {
+                   break;
+               }
+               attempts++;
+            }
+            if (cardObj) cards.push(cardObj);
         }
     }
-    return { cards, remainingDeck: currentWhiteDeck };
+    return { cards, remainingDeck: updatedDeck };
   };
 
   const nextRound = useCallback(() => {
@@ -118,7 +151,7 @@ export function useCAH() {
         let newWhiteDeck = [...prev.whiteDeck];
         const newPlayers = prev.players.map(p => {
             const missing = 10 - p.hand.length;
-            const { cards, remainingDeck } = drawWhiteCards(missing);
+            const { cards, remainingDeck } = drawWhiteCards(missing, p.hand, newWhiteDeck);
             newWhiteDeck = remainingDeck;
             return {
                 ...p,
@@ -144,7 +177,7 @@ export function useCAH() {
     });
   }, []);
 
-  const playWhiteCards = useCallback((playerId: string, cards: string[]) => {
+  const playWhiteCards = useCallback((playerId: string, cards: string[], filledTexts?: string[]) => {
     setGameState(prev => {
       const p = prev.players.find(pl => pl.id === playerId);
       if (!p) return prev;
@@ -160,7 +193,7 @@ export function useCAH() {
         return pl;
       });
 
-      const newSubmissions = [...prev.submissions, { playerId, cards }];
+      const newSubmissions = [...prev.submissions, { playerId, cards: filledTexts || cards }];
       
       const nonCzarCount = prev.players.length - 1;
       let nextPhase = prev.phase;

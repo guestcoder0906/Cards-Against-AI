@@ -29,6 +29,9 @@ export function GameApp() {
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
   const [selectedWhiteCards, setSelectedWhiteCards] = useState<string[]>([]);
+  const [customCardInputs, setCustomCardInputs] = useState<Record<string, string>>({});
+  const [fillingCustomCardId, setFillingCustomCardId] = useState<string | null>(null);
+  const [currentCustomTextInput, setCurrentCustomTextInput] = useState('');
 
   const gameStateRef = useRef(gameState);
   const messagesRef = useRef(messages);
@@ -142,25 +145,45 @@ The black card is: "${state.currentBlackCard.text}"
 
 You must pick ${pickCount} card(s).
 Here is your hand:
-${p.hand.map((c, i) => `${i + 1}) ${c}`).join('\n')}
+${p.hand.map((c, i) => `${i + 1}) ${c.startsWith('__CUSTOM__') ? '[BLANK CUSTOM CARD - You can invent a funny answer!]' : c}`).join('\n')}
 
-Reply ONLY with the number(s) (from 1 to 10) of your chosen card(s) separated by spaces. If picking multiple, order them logically to fill the blanks.`;
+Reply with the number(s) of your chosen card(s) separated by spaces on the FIRST line. Keep them ordered to logically fill the blanks.
+If you chose any [BLANK CUSTOM CARD], provide the completely unhinged or funny custom text you want to play for it on the following lines (one line per custom card).`;
           try {
             const res = await puter.ai.chat(prompt);
             const text = typeof res === 'string' ? res : (res?.message?.content?.[0]?.text || res?.text || res?.toString() || "");
             
             if (active && gameStateRef.current.phase === 'PLAY_WHITE_CARDS' && gameStateRef.current.players.find(pl => pl.id === p.id)?.playedCards.length === 0) {
-              const matches = text.match(/\b([1-9]|10)\b/g);
-              let pickedCards = [];
+              const lines = text.trim().split('\n').filter((l: string) => l.trim());
+              const numbersLine = lines[0] || "";
+              const matches = numbersLine.match(/\b([1-9]|10)\b/g);
+              let pickedCards: string[] = [];
               if (matches && matches.length >= pickCount) {
-                  pickedCards = matches.slice(0, pickCount).map(m => p.hand[parseInt(m) - 1]);
+                  pickedCards = matches.slice(0, pickCount).map((m: string) => p.hand[parseInt(m) - 1]);
               } else {
                   pickedCards = p.hand.slice(0, pickCount);
               }
-              playWhiteCards(p.id, pickedCards);
+
+              let customTextIdx = 1;
+              const filledTexts = pickedCards.map(c => {
+                  if (c?.startsWith('__CUSTOM__')) {
+                      let customText = "A completely blank mind";
+                      if (lines[customTextIdx]) {
+                           customText = lines[customTextIdx].trim();
+                           customTextIdx++;
+                      }
+                      return `[CUSTOM] ${customText}`;
+                  }
+                  return c || "Error";
+              });
+
+              playWhiteCards(p.id, pickedCards, filledTexts);
             }
           } catch (e) {
-            if (active && gameStateRef.current.phase === 'PLAY_WHITE_CARDS') playWhiteCards(p.id, p.hand.slice(0, pickCount));
+            if (active && gameStateRef.current.phase === 'PLAY_WHITE_CARDS') {
+                const pc = p.hand.slice(0, pickCount);
+                playWhiteCards(p.id, pc, pc.map(c => c.startsWith('__CUSTOM__') ? '[CUSTOM] Something random' : c));
+            }
           } finally {
             setTypingModels(prev => { const s = new Set(prev); s.delete(p.id); return s; });
           }
@@ -506,11 +529,24 @@ Format EXACTLY: [Emoji] | [Message] or just [Message] if no emoji.`;
                   if (isSelected) {
                       setSelectedWhiteCards(prev => prev.filter(card => card !== c));
                   } else {
+                      if (c.startsWith('__CUSTOM__')) {
+                          setFillingCustomCardId(c);
+                          setCurrentCustomTextInput('');
+                          return;
+                      }
+                      
                       const newSelected = [...selectedWhiteCards, c];
                       setSelectedWhiteCards(newSelected);
                       if (newSelected.length === pickCount) {
-                          playWhiteCards('user', newSelected);
+                          const filledTexts = newSelected.map(sel => {
+                              if (sel.startsWith('__CUSTOM__')) {
+                                  return customCardInputs[sel] ? `[CUSTOM] ${customCardInputs[sel]}` : `[CUSTOM] Error`;
+                              }
+                              return sel;
+                          });
+                          playWhiteCards('user', newSelected, filledTexts);
                           setSelectedWhiteCards([]);
+                          setCustomCardInputs({});
                       }
                   }
               };
@@ -523,14 +559,27 @@ Format EXACTLY: [Emoji] | [Message] or just [Message] if no emoji.`;
                      playable ? 'hover:-translate-y-4 shadow-xl cursor-pointer hover:ring-2 ring-indigo-500' : 'opacity-60 cursor-not-allowed'
                   } ${isPlayed ? '-translate-y-8 absolute' : ''} ${isSelected ? 'ring-4 ring-emerald-500 -translate-y-4 shadow-xl' : ''}`}
                 >
-                  <div dangerouslySetInnerHTML={{ __html: c }} />
+                  {c.startsWith('__CUSTOM__') ? (
+                      <div className="flex flex-col h-full w-full opacity-60 items-center justify-center text-center">
+                          <span className="text-4xl mb-2">✏️</span>
+                          <span className="uppercase text-xs tracking-widest text-slate-400">Blank Card</span>
+                          <span className="text-[10px] mt-2 text-indigo-500 font-bold border border-indigo-200 px-2 py-1 rounded-sm bg-indigo-50">CUSTOM</span>
+                          {isSelected && customCardInputs[c] && (
+                              <div className="mt-4 text-black text-sm font-bold truncate w-full text-left bg-white absolute top-4 left-4 right-4">
+                                  {customCardInputs[c]}
+                              </div>
+                          )}
+                      </div>
+                  ) : (
+                    <div dangerouslySetInnerHTML={{ __html: c }} />
+                  )}
                   {isSelected && pickCount > 1 && (
-                      <div className="absolute top-2 right-2 bg-emerald-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-lg">
+                      <div className="absolute top-2 right-2 bg-emerald-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-lg z-10">
                           {selectedWhiteCards.indexOf(c) + 1}
                       </div>
                   )}
                   {isPlayed && pickCount > 1 && (
-                      <div className="absolute top-2 right-2 bg-indigo-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-lg">
+                      <div className="absolute top-2 right-2 bg-indigo-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shadow-lg z-10">
                           {user?.playedCards?.indexOf(c) + 1}
                       </div>
                   )}
@@ -540,6 +589,74 @@ Format EXACTLY: [Emoji] | [Message] or just [Message] if no emoji.`;
           </div>
         </div>
       </main>
+
+      {/* Custom Card Input Modal */}
+      {fillingCustomCardId && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+              <div className="bg-[#11141d] w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+                  <div className="p-6 bg-slate-800 border-b border-slate-700">
+                      <h3 className="text-xl font-bold text-white uppercase tracking-wider">Fill Blank Card</h3>
+                      <p className="text-slate-400 text-sm mt-2">Write your custom response below.</p>
+                      <div className="mt-4 p-4 bg-black/50 rounded-lg border border-slate-700 font-bold text-lg">
+                         <div dangerouslySetInnerHTML={{ __html: gameState.currentBlackCard?.text || '' }} />
+                      </div>
+                  </div>
+                  <div className="p-6">
+                      <textarea
+                          className="w-full h-32 bg-black/50 border border-slate-700 rounded-xl p-4 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 font-bold resize-none custom-scrollbar"
+                          placeholder="Your hilarious, unhinged, or weird response..."
+                          value={currentCustomTextInput}
+                          onChange={(e) => setCurrentCustomTextInput(e.target.value)}
+                          autoFocus
+                      />
+                      <div className="mt-6 flex gap-4 justify-end">
+                          <button
+                              onClick={() => {
+                                  setFillingCustomCardId(null);
+                                  setCurrentCustomTextInput('');
+                              }}
+                              className="px-6 py-3 text-slate-300 font-bold rounded-xl hover:bg-slate-800 transition-colors"
+                          >
+                              Cancel
+                          </button>
+                          <button
+                              disabled={!currentCustomTextInput.trim()}
+                              onClick={() => {
+                                  if (!currentCustomTextInput.trim()) return;
+                                  setCustomCardInputs(prev => ({ ...prev, [fillingCustomCardId]: currentCustomTextInput.trim() }));
+                                  
+                                  const newSelected = [...selectedWhiteCards, fillingCustomCardId];
+                                  setSelectedWhiteCards(newSelected);
+                                  
+                                  if (newSelected.length === (gameState.currentBlackCard?.pick || 1)) {
+                                      const filledTexts = newSelected.map(sel => {
+                                          if (sel === fillingCustomCardId) {
+                                              return `[CUSTOM] ${currentCustomTextInput.trim()}`;
+                                          }
+                                          if (sel.startsWith('__CUSTOM__')) {
+                                              return customCardInputs[sel] ? `[CUSTOM] ${customCardInputs[sel]}` : `[CUSTOM] Error`;
+                                          }
+                                          return sel;
+                                      });
+                                      playWhiteCards('user', newSelected, filledTexts);
+                                      setSelectedWhiteCards([]);
+                                      setCustomCardInputs({});
+                                  }
+                                  
+                                  setFillingCustomCardId(null);
+                                  setCurrentCustomTextInput('');
+                              }}
+                              className={`px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg transition-all ${
+                                  currentCustomTextInput.trim() ? 'hover:-translate-y-1 hover:shadow-indigo-500/50' : 'opacity-50 cursor-not-allowed'
+                              }`}
+                          >
+                              Play Card
+                          </button>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {/* Persistent Chat Overlay at Bottom */}
       <div className={`fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-[#11141d] border-x border-t border-slate-700 rounded-t-xl shadow-2xl transition-transform duration-300 z-50 ${chatHidden ? 'translate-y-[calc(100%-48px)]' : 'translate-y-0'}`}>
