@@ -7,6 +7,32 @@ import { AI_MODELS } from './data';
 
 declare const puter: any;
 
+const fallbackCustomTexts = [
+  "Shoving a whole cucumber up my nose",
+  "An aggressively loud fart during a funeral",
+  "Elon Musk crying in a Tesla cyber-cab",
+  "An inappropriate relationship with a Roomba",
+  "Getting high on catnip and scratching the couch",
+  "Drinking expired milk to feel something",
+  "My grandma's secret OnlyFans account",
+  "A massive spoon covered in mayonnaise",
+  "Whispering 'it's free real estate' into a stranger's ear",
+  "A disappointing salad with too much kale",
+  "Accidentally hitting 'Reply All' with a spicy draft",
+  "Using hot sauce as eye drops to stay awake",
+  "A modern art piece that is just a garbage can",
+  "Buying WinRAR after a 10-year free trial",
+  "Eating a raw onion like an apple",
+  "Apologizing to the microwave when it finishes"
+];
+
+function cleanCustomText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/^(Line\s*\d+\s*:\s*|Card\s*\d+\s*:\s*|Option\s*\d+\s*:\s*|Custom\s*\d*\s*:\s*|\[Custom\s*\d*\]\s*|[-*+]\s*|\d+[\).]\s*)/i, '')
+    .trim();
+}
+
 export function GameApp() {
   const { 
     gameState, 
@@ -143,18 +169,22 @@ Reply ONLY with the number (1, 2, or 3) of the card you want. Choose the one you
           const prompt = `We are playing Cards Against Humanity. Timer: ${timeLeftRef.current}s.
 The black card is: "${state.currentBlackCard.text}"
 
-You must pick ${pickCount} card(s).
+You must pick EXACTLY ${pickCount} card(s).
 Here is your hand:
-${p.hand.map((c, i) => `${i + 1}) ${c.startsWith('__CUSTOM__') ? '[BLANK CUSTOM CARD - You can invent a funny answer!]' : c}`).join('\n')}
+${p.hand.map((c, i) => `${i + 1}) ${c.startsWith('__CUSTOM__') ? `[BLANK CUSTOM CARD #${i + 1} - You can invent a unique, funny custom answer for this specific card!]` : c}`).join('\n')}
 
-Reply with the number(s) of your chosen card(s) separated by spaces on the FIRST line. Keep them ordered to logically fill the blanks.
-If you chose any [BLANK CUSTOM CARD], provide the completely unhinged or funny custom text you want to play for it on the following lines (one line per custom card).`;
+Reply with the number(s) of your chosen card(s) (1 to 10) separated by spaces on the very first line of your output. Order them logically to fill the blanks.
+If you have chosen any custom blank card(s), you MUST write the custom text you want to fill in under the first line, with each chosen custom card's text on a SEPARATE line in the order of selection.
+IMPORTANT: Do NOT make the custom texts the same! Each selected custom blank card must have a completely unique, different, funny, and distinct answer.
+Example response format if you chose a custom card for slot 1 and card 3 for slot 2:
+1 3
+Your custom text here for the custom card`;
           try {
             const res = await puter.ai.chat(prompt);
             const text = typeof res === 'string' ? res : (res?.message?.content?.[0]?.text || res?.text || res?.toString() || "");
             
             if (active && gameStateRef.current.phase === 'PLAY_WHITE_CARDS' && gameStateRef.current.players.find(pl => pl.id === p.id)?.playedCards.length === 0) {
-              const lines = text.trim().split('\n').filter((l: string) => l.trim());
+              const lines = text.trim().split('\n').map((l: string) => l.trim()).filter(Boolean);
               const numbersLine = lines[0] || "";
               const matches = numbersLine.match(/\b([1-9]|10)\b/g);
               let pickedCards: string[] = [];
@@ -165,13 +195,30 @@ If you chose any [BLANK CUSTOM CARD], provide the completely unhinged or funny c
               }
 
               let customTextIdx = 1;
+              const usedCustomTexts = new Set<string>();
               const filledTexts = pickedCards.map(c => {
                   if (c?.startsWith('__CUSTOM__')) {
-                      let customText = "A completely blank mind";
+                      let customText = "";
                       if (lines[customTextIdx]) {
-                           customText = lines[customTextIdx].trim();
+                           customText = cleanCustomText(lines[customTextIdx]);
                            customTextIdx++;
                       }
+                      
+                      // Check for duplicates or empty
+                      if (!customText || usedCustomTexts.has(customText.toLowerCase())) {
+                           let randomFallback = "";
+                           let attempts = 0;
+                           while (attempts < 50) {
+                               randomFallback = fallbackCustomTexts[Math.floor(Math.random() * fallbackCustomTexts.length)];
+                               if (!usedCustomTexts.has(randomFallback.toLowerCase())) {
+                                   break;
+                               }
+                               attempts++;
+                           }
+                           customText = randomFallback || "A generic blank card";
+                      }
+                      
+                      usedCustomTexts.add(customText.toLowerCase());
                       return `[CUSTOM] ${customText}`;
                   }
                   return c || "Error";
@@ -182,7 +229,24 @@ If you chose any [BLANK CUSTOM CARD], provide the completely unhinged or funny c
           } catch (e) {
             if (active && gameStateRef.current.phase === 'PLAY_WHITE_CARDS') {
                 const pc = p.hand.slice(0, pickCount);
-                playWhiteCards(p.id, pc, pc.map(c => c.startsWith('__CUSTOM__') ? '[CUSTOM] Something random' : c));
+                const usedCustomTexts = new Set<string>();
+                const filled = pc.map(c => {
+                    if (c?.startsWith('__CUSTOM__')) {
+                        let randomFallback = "";
+                        let attempts = 0;
+                        while (attempts < 50) {
+                            randomFallback = fallbackCustomTexts[Math.floor(Math.random() * fallbackCustomTexts.length)];
+                            if (!usedCustomTexts.has(randomFallback.toLowerCase())) {
+                                break;
+                            }
+                            attempts++;
+                        }
+                        usedCustomTexts.add(randomFallback.toLowerCase());
+                        return `[CUSTOM] ${randomFallback}`;
+                    }
+                    return c;
+                });
+                playWhiteCards(p.id, pc, filled);
             }
           } finally {
             setTypingModels(prev => { const s = new Set(prev); s.delete(p.id); return s; });
@@ -466,12 +530,20 @@ Format EXACTLY: [Emoji] | [Message] or just [Message] if no emoji.`;
                        filledText = filledText.replace(/_+/g, (match) => {
                            if (cIndex < s.cards.length) {
                                const card = s.cards[cIndex++];
-                               return `<span class="bg-white text-black px-2 py-0.5 rounded-md mx-1 shadow-sm inline-block">${card.replace(/\.$/, '')}</span>`;
+                                                              const isCustom = card.startsWith('[CUSTOM]');
+                               const displayCard = isCustom ? card.replace('[CUSTOM]', '').trim() : card;
+                               const customTag = isCustom ? ' <span class="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-500/30 uppercase tracking-wider inline-block ml-1">Custom</span>' : '';
+                               return `<span class="bg-white text-black px-2 py-0.5 rounded-md mx-1 shadow-sm inline-block">${displayCard.replace(/\.$/, '')}${customTag}</span>`;
                            }
                            return match;
                        });
                    } else {
-                       filledText += '<br/><br/>' + s.cards.map(c => `<span class="bg-white text-black px-2 py-1 rounded-md block mt-2 shadow-sm">${c.replace(/\.$/, '')}</span>`).join('');
+                                              filledText += '<br/><br/>' + s.cards.map(c => {
+                           const isCustom = c.startsWith('[CUSTOM]');
+                           const displayCard = isCustom ? c.replace('[CUSTOM]', '').trim() : c;
+                           const customTag = isCustom ? ' <span class="bg-amber-500/20 text-amber-400 text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-500/30 uppercase tracking-wider inline-block ml-1">Custom</span>' : '';
+                           return `<span class="bg-white text-black px-2 py-1 rounded-md block mt-2 shadow-sm">${displayCard.replace(/\.$/, '')}${customTag}</span>`;
+                       }).join('');
                    }
 
                    return (
