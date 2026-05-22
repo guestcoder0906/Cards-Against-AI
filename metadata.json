@@ -1,0 +1,6 @@
+{
+  "name": "Cards Against Humanity: AI Edition",
+  "description": "A live, fully-functional Cards Against Humanity game featuring autonomous AI opponents with real-time text-to-speech chat, judging, and gameplay using the official CAH decks.",
+  "requestFramePermissions": ["speaker"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
